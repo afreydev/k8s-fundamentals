@@ -222,15 +222,62 @@ kubectl describe replicaset <rs-name>     # notice the ownerReferences → Deplo
 
 You *can* create a ReplicaSet directly with `kind: ReplicaSet`, but there is rarely a reason to. If you change the image tag in a bare ReplicaSet manifest and re-apply, **existing pods are not updated** — only new pods get the new image. A Deployment solves this by creating a new ReplicaSet and gradually migrating pods across.
 
-### What happens when you delete a pod
+### Bare ReplicaSet manifest — `03-deployments/replicaset-nginx.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: nginx-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-rs
+  template:
+    metadata:
+      labels:
+        app: nginx-rs
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+          ports:
+            - containerPort: 80
+```
 
 ```bash
-# Delete one pod manually — the ReplicaSet controller notices immediately
-kubectl delete pod <any-pod-name>
-
-# Watch the replacement appear (the RS reconciles back to desired count)
-kubectl get pods -w
+kubectl apply -f 03-deployments/replicaset-nginx.yaml
+kubectl get replicasets
+kubectl get pods -l app=nginx-rs
 ```
+
+### Demo 1 — delete a pod and watch it come back
+
+```bash
+# Grab any pod name
+kubectl get pods -l app=nginx-rs
+
+# Open a watch in a second terminal
+kubectl get pods -w
+
+# Delete one pod from the first terminal
+kubectl delete pod <pod-name>
+```
+
+**Expected result:**
+
+```
+NAME             READY   STATUS        RESTARTS   AGE
+nginx-rs-4xk2p   1/1     Running       0          2m
+nginx-rs-7bqrm   1/1     Terminating   0          2m   ← deleted
+nginx-rs-9vzlt   1/1     Running       0          2m
+nginx-rs-kcj8d   0/1     Pending       0          1s   ← new pod, already scheduled
+nginx-rs-kcj8d   0/1     ContainerCreating   0   1s
+nginx-rs-kcj8d   1/1     Running       0          3s   ← back to 3
+```
+
+The replacement pod has a new name and a new IP. The RS controller reacted as soon as the pod count dropped below `replicas: 3`.
 
 The sequence under the hood:
 1. `kubelet` reports the pod as gone to the API server.
@@ -238,7 +285,39 @@ The sequence under the hood:
 3. The Scheduler picks a node for it.
 4. `kubelet` on that node pulls the image and starts the container.
 
-The whole thing usually takes a few seconds. The replacement pod gets a **new name and a new IP** — the old one is gone for good. This is why you need a Service in front: it tracks live pods by label, not by name or IP.
+### Demo 2 — update the image and see that existing pods are NOT replaced
+
+Edit `replicaset-nginx.yaml` and change the image tag:
+
+```yaml
+# Change image: nginx:1.24  →  nginx:1.25
+          image: nginx:1.25
+```
+
+```bash
+kubectl apply -f 03-deployments/replicaset-nginx.yaml
+kubectl get pods -l app=nginx-rs
+```
+
+**Expected result:** the three pods are still running. Nothing changed.
+
+```bash
+# Verify: the running pods still use the old image
+kubectl get pods -l app=nginx-rs -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+```
+
+```
+nginx-rs-4xk2p   nginx:1.24   ← old image, still running
+nginx-rs-7bqrm   nginx:1.24
+nginx-rs-9vzlt   nginx:1.24
+```
+
+The ReplicaSet controller only looks at the pod count, not the image. It has no mechanism to roll out a change to existing pods. To force the update, you would have to delete the pods manually one by one — and at that point you are reinventing what a Deployment already does automatically.
+
+```bash
+# Clean up
+kubectl delete -f 03-deployments/replicaset-nginx.yaml
+```
 
  > Good demo: open a second terminal with `kubectl get pods -w`, then delete a pod from the first. The watch window shows the reconciliation loop reacting in real time.
 
@@ -704,6 +783,7 @@ kubectl rollout undo deployment/<name>
 | File | Kind | Phase |
 |------|------|-------|
 | `02-pods/pod-nginx.yaml` | Pod | 2 |
+| `03-deployments/replicaset-nginx.yaml` | ReplicaSet | 3 |
 | `03-deployments/deployment-nginx.yaml` | Deployment | 3 |
 | `04-services/service-nginx.yaml` | Service | 4 |
 | `04-services/pod-busybox.yaml` | Pod | 4 |
