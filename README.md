@@ -1,22 +1,19 @@
 # Kubernetes Fundamentals — 1-Hour Lecture Guide
-### Using minikube · Manifest-first approach · Pre-built images only
+
+Hands-on session using minikube. No custom images to build — everything uses `nginx`, `redis`, or `busybox`. The rule for the session: create everything with `kubectl apply -f <file>.yaml`. We'll show `kubectl run` once and then leave it alone.
 
 ---
 
 ## Overview
 
-| Phase | Topic | Duration |
-|-------|-------|----------|
-| 0 | Setup & prerequisites | Pre-session |
+| Phase | Topic | ~Time |
+|-------|-------|-------|
+| 0 | Setup & prerequisites | pre-session |
 | 1 | Architecture walkthrough | 15 min |
 | 2 | Pods | 12 min |
 | 3 | Deployments | 13 min |
 | 4 | Services | 12 min |
 | 5 | ConfigMaps, Secrets, Namespaces + Q&A | 8 min |
-
-**Images used throughout:** `nginx`, `redis`, `busybox`
-
-> **Philosophy:** Everything is created via `kubectl apply -f <file>.yaml`. Imperative commands (`kubectl run`, `kubectl create`) are shown once to prove it's possible — then we move to manifests for the rest of the session.
 
 ---
 
@@ -69,9 +66,7 @@ minikube image load busybox
 
 ## Phase 1 — Kubernetes architecture (15 min)
 
-### Key concept
-
-Kubernetes is a **container orchestration platform**. You declare the desired state in YAML manifests; Kubernetes makes it happen and keeps it that way through a continuous reconciliation loop.
+Kubernetes is a **container orchestration platform**. You declare the desired state in YAML; Kubernetes figures out how to make it happen and keeps it there through a continuous reconciliation loop.
 
 ### Control plane
 
@@ -99,24 +94,20 @@ kubectl get pods -n kube-system     # see all control plane components
 minikube dashboard                  # optional browser UI
 ```
 
-> **Teaching point:** minikube collapses control plane + worker into one VM. In production you'd have separate nodes for each.
+ > Note: minikube runs everything — control plane and worker — in a single VM. Worth pointing out so people don't think this is how production looks.
 
 ---
 
 ## Phase 2 — Pods (12 min)
 
-### Key concept
+A **Pod** is the smallest thing Kubernetes can schedule. It holds one or more containers that share a network namespace — so they talk to each other over `localhost` — and each pod gets its own cluster-internal IP.
 
-A **Pod** is the smallest deployable unit in Kubernetes. It wraps one or more containers that share a network namespace and storage volumes.
+The important thing to understand early: pods are ephemeral. If one dies, nothing brings it back. That's what Deployments are for.
 
-- Each pod gets its own cluster-internal IP
-- Containers inside a pod talk to each other via `localhost`
-- Pods are **ephemeral** — when they die, nothing reschedules them (that's what Deployments are for)
-
-### Imperative (show once, then never again)
+### Imperative (show once, then move on)
 
 ```bash
-# This works — but we won't do it this way
+# Works fine — we're just not doing it this way
 kubectl run nginx-pod --image=nginx
 kubectl delete pod nginx-pod
 ```
@@ -161,20 +152,13 @@ kubectl get pod nginx-pod -o yaml
 kubectl delete -f 02-pods/pod-nginx.yaml
 ```
 
-> **Teaching point:** After deleting, show that nothing brings the pod back. This is the natural lead-in to Deployments.
+ > After deleting, show that nothing came back — that's the natural lead-in to Deployments.
 
 ---
 
 ## Phase 3 — Deployments (13 min)
 
-### Key concept
-
-A **Deployment** manages a ReplicaSet, which in turn manages a set of identical Pods. You declare desired state; Kubernetes continuously reconciles toward it.
-
-- **Self-healing:** dead pods are automatically replaced
-- **Scaling:** change `replicas` in the manifest and re-apply
-- **Rolling updates:** change `image` and re-apply — zero downtime
-- **Rollback:** revert with a single command
+A **Deployment** manages a ReplicaSet, which manages a set of identical pods. Declare how many replicas you want — if one dies, the controller replaces it. Change the image tag and re-apply — you get a rolling update. It also gives you rollback out of the box.
 
 ### The manifest — `03-deployments/deployment-nginx.yaml`
 
@@ -267,22 +251,20 @@ kubectl rollout undo deployment/nginx-deploy
 kubectl rollout status deployment/nginx-deploy
 ```
 
-> **Teaching point:** Scale to 5, open a second terminal with `kubectl get pods -w`, then delete two pods at once. The watch window shows the reconciliation loop in real time.
+ > Good demo: scale to 5, open a second terminal with `kubectl get pods -w`, then delete two pods at once from the first. The watch window shows the reconciliation loop reacting in real time.
 
 ---
 
 ## Phase 4 — Services (12 min)
 
-### Key concept
-
-A **Service** gives a stable network endpoint to a dynamic set of Pods. Pod IPs change when pods restart — a Service provides a consistent DNS name and virtual IP backed by kube-proxy.
+Pod IPs change every time a pod restarts. A **Service** solves this by giving you a stable DNS name and virtual IP that kube-proxy keeps pointing at the current live pods.
 
 ### Service types
 
-| Type | Access | Use case |
-|------|--------|----------|
-| **ClusterIP** | Inside cluster only (default) | Internal microservice communication |
-| **NodePort** | Node IP + static port (30000–32767) | Dev/testing, minikube demos |
+| Type | Access | When to use |
+|------|--------|------------|
+| **ClusterIP** | Inside cluster only (default) | Service-to-service calls |
+| **NodePort** | Node IP + a port in 30000–32767 | Local dev, minikube demos |
 | **LoadBalancer** | Cloud load balancer | Production external traffic |
 
 ### The manifest — `04-services/service-nginx.yaml`
@@ -349,15 +331,15 @@ kubectl delete -f 04-services/service-nginx.yaml
 kubectl delete -f 03-deployments/deployment-nginx.yaml
 ```
 
-> **Teaching point:** The `selector: app: nginx` is the glue between Service and Deployment. Change it to something wrong and show the service returning no endpoints — great way to explain label selectors.
+ > The `selector: app: nginx` is the glue between Service and Deployment. Change it to something that doesn't match, re-apply, and `kubectl describe service nginx-service` will show 0 endpoints — useful for making label selectors concrete.
 
 ---
 
 ## Phase 5 — ConfigMaps, Secrets & Namespaces + Q&A (8 min)
 
-### ConfigMaps — externalise configuration
+### ConfigMaps
 
-Keep config out of your container image. A ConfigMap stores plain key-value data that pods consume as environment variables or mounted files.
+Keep config out of your container image. A ConfigMap holds plain key-value pairs that pods can consume as env vars or mounted files.
 
 **`05-config/configmap-app.yaml`**
 
@@ -404,9 +386,9 @@ kubectl delete -f 05-config/configmap-app.yaml
 
 ---
 
-### Secrets — sensitive data
+### Secrets
 
-Same idea as ConfigMap, but values are base64-encoded and treated with extra care (RBAC, encryption at rest in production).
+Same idea as ConfigMap, but values are base64-encoded and get extra treatment in real clusters — RBAC, encryption at rest. Worth being clear: base64 is not encryption, it's just encoding.
 
 **`05-config/secret-db.yaml`**
 
@@ -461,9 +443,9 @@ kubectl delete -f 05-config/secret-db.yaml
 
 ---
 
-### Namespaces — logical isolation
+### Namespaces
 
-Namespaces partition a cluster into virtual sub-clusters — useful for separating teams, environments, or applications.
+Namespaces let you carve up a cluster into isolated slices — by team, by environment, whatever makes sense. Resources in different namespaces can share the same name without conflicting.
 
 **`05-config/namespace-staging.yaml`**
 
@@ -586,4 +568,3 @@ minikube delete
 
 ---
 
-*Kubernetes Fundamentals · 1-Hour Lecture Guide · minikube edition · manifest-first*
