@@ -202,15 +202,45 @@ kubectl get replicasets                   # see the RS underneath
 kubectl describe deployment nginx-deploy
 ```
 
-### Self-healing demo
+### ReplicaSets — what's underneath the Deployment
+
+When you apply a Deployment, Kubernetes creates a **ReplicaSet** automatically. The ReplicaSet's only job is to make sure a given number of identical pods are running at all times.
 
 ```bash
-# Kill one pod manually
+kubectl get replicasets                   # see the RS created by the deployment
+kubectl describe replicaset <rs-name>     # notice the ownerReferences → Deployment
+```
+
+**ReplicaSet vs Deployment — why you almost always want a Deployment:**
+
+| | ReplicaSet | Deployment |
+|--|------------|------------|
+| Keeps N pods running | Yes | Yes (via RS) |
+| Rolling updates | No | Yes |
+| Rollback | No | Yes |
+| Manages multiple RS versions | No | Yes |
+
+You *can* create a ReplicaSet directly with `kind: ReplicaSet`, but there is rarely a reason to. If you change the image tag in a bare ReplicaSet manifest and re-apply, **existing pods are not updated** — only new pods get the new image. A Deployment solves this by creating a new ReplicaSet and gradually migrating pods across.
+
+### What happens when you delete a pod
+
+```bash
+# Delete one pod manually — the ReplicaSet controller notices immediately
 kubectl delete pod <any-pod-name>
 
-# Watch it get replaced automatically
+# Watch the replacement appear (the RS reconciles back to desired count)
 kubectl get pods -w
 ```
+
+The sequence under the hood:
+1. `kubelet` reports the pod as gone to the API server.
+2. The ReplicaSet controller sees `current < desired` and creates a new pod spec.
+3. The Scheduler picks a node for it.
+4. `kubelet` on that node pulls the image and starts the container.
+
+The whole thing usually takes a few seconds. The replacement pod gets a **new name and a new IP** — the old one is gone for good. This is why you need a Service in front: it tracks live pods by label, not by name or IP.
+
+ > Good demo: open a second terminal with `kubectl get pods -w`, then delete a pod from the first. The watch window shows the reconciliation loop reacting in real time.
 
 ### Scaling — edit the manifest
 
@@ -251,7 +281,146 @@ kubectl rollout undo deployment/nginx-deploy
 kubectl rollout status deployment/nginx-deploy
 ```
 
- > Good demo: scale to 5, open a second terminal with `kubectl get pods -w`, then delete two pods at once from the first. The watch window shows the reconciliation loop reacting in real time.
+ > Scale to 5 and delete two pods at once from one terminal while watching `kubectl get pods -w` in another — makes the reconciliation loop very concrete.
+
+---
+
+## Bonus demo — two versions, one Service (canary pattern)
+
+This demo makes label selectors and load balancing concrete: two Deployments run different versions of the same app, and a single Service routes traffic to both because they share a common label.
+
+The image used is `hashicorp/http-echo` — it serves whatever string you pass as `-text`, so each version replies with a different message and you can see the balancing live.
+
+### `06-canary/deployment-v1.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: echo
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: echo
+        version: v1
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo
+          args:
+            - "-text=Hello from v1"
+          ports:
+            - containerPort: 5678
+```
+
+### `06-canary/deployment-v2.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-v2
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: echo
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: echo
+        version: v2
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo
+          args:
+            - "-text=Hello from v2"
+          ports:
+            - containerPort: 5678
+```
+
+### `06-canary/service-echo.yaml`
+
+The selector only matches on `app: echo` — it intentionally ignores `version`. This means it sees all 4 pods (2 × v1, 2 × v2) as valid endpoints.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-service
+spec:
+  type: NodePort
+  selector:
+    app: echo          # matches BOTH versions — version label is NOT here
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5678
+      nodePort: 30090
+```
+
+### Apply and watch the balancing
+
+```bash
+kubectl apply -f 06-canary/deployment-v1.yaml
+kubectl apply -f 06-canary/deployment-v2.yaml
+kubectl apply -f 06-canary/service-echo.yaml
+
+# Confirm all 4 pods are endpoints of the service
+kubectl get pods -l app=echo --show-labels
+kubectl describe service echo-service      # Endpoints should list 4 IPs
+
+# Hit the service repeatedly — responses alternate between v1 and v2
+for i in $(seq 1 10); do curl -s $(minikube service echo-service --url); done
+```
+
+Expected output — roughly half v1, half v2:
+
+```
+Hello from v1
+Hello from v2
+Hello from v1
+Hello from v1
+Hello from v2
+...
+```
+
+### What this shows
+
+- The `version` label on the pods is **not** in the Service selector, so both Deployments' pods are included as endpoints.
+- kube-proxy does round-robin across all matching pods — no preference for version.
+- Each Deployment is still independently managed: you can scale, update, or roll back `echo-v1` without touching `echo-v2`.
+
+### Simulate a canary rollout by adjusting replica counts
+
+```bash
+# Send ~25% traffic to v2 by keeping 3 v1 pods and 1 v2 pod
+# Edit deployment-v1.yaml → replicas: 3
+# Edit deployment-v2.yaml → replicas: 1
+kubectl apply -f 06-canary/deployment-v1.yaml
+kubectl apply -f 06-canary/deployment-v2.yaml
+
+for i in $(seq 1 8); do curl -s $(minikube service echo-service --url); done
+# Now roughly 6 × v1, 2 × v2
+```
+
+### Clean up
+
+```bash
+kubectl delete -f 06-canary/deployment-v1.yaml
+kubectl delete -f 06-canary/deployment-v2.yaml
+kubectl delete -f 06-canary/service-echo.yaml
+```
+
+ > Key teaching point: the Service selector is the only thing that decides which pods receive traffic. Adding or removing a label from a pod — or from the selector — is how you include or exclude it, with no downtime and no Service restart needed.
 
 ---
 
@@ -544,6 +713,9 @@ kubectl rollout undo deployment/<name>
 | `05-config/pod-with-secret.yaml` | Pod | 5 |
 | `05-config/namespace-staging.yaml` | Namespace | 5 |
 | `05-config/deployment-redis-staging.yaml` | Deployment | 5 |
+| `06-canary/deployment-v1.yaml` | Deployment | bonus |
+| `06-canary/deployment-v2.yaml` | Deployment | bonus |
+| `06-canary/service-echo.yaml` | Service | bonus |
 
 ---
 
@@ -560,6 +732,9 @@ kubectl delete -f 05-config/secret-db.yaml
 kubectl delete -f 05-config/pod-with-secret.yaml
 kubectl delete -f 05-config/deployment-redis-staging.yaml
 kubectl delete -f 05-config/namespace-staging.yaml
+kubectl delete -f 06-canary/deployment-v1.yaml
+kubectl delete -f 06-canary/deployment-v2.yaml
+kubectl delete -f 06-canary/service-echo.yaml
 
 # Or wipe the cluster entirely
 minikube stop
