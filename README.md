@@ -821,5 +821,27 @@ minikube stop
 minikube delete
 ```
 
+## Get info
+
+```bash
+# Get a single field
+kubectl get pod <pod-name> -o jsonpath='{.status.podIP}'
+
+# Multiple fields
+kubectl get pod <pod-name> -o jsonpath='{.metadata.name} {.status.phase}'
+
+# With a newline
+kubectl get pod <pod-name> -o jsonpath='{.metadata.name}{"\n"}'
+
+# Nested field (container image)
+kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].image}'
+
+# All container names in a pod
+kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].name}'
+
+# Loop over items (all pods)
+kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.podIP}{"\n"}{end}'
+``
+
 ---
 
