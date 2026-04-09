@@ -841,7 +841,7 @@ kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].name}'
 
 # Loop over items (all pods)
 kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.podIP}{"\n"}{end}'
-``
+```
 
 ---
 
