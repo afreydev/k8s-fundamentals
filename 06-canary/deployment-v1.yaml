@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: echo-v1
 spec:
-  replicas: 2
+  replicas: 0
   selector:
     matchLabels:
       app: echo

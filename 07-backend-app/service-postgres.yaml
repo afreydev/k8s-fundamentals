@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  labels:
+    app: postgres
+spec:
+  clusterIP: None             # headless — no VIP, DNS returns the pod IPs directly
+  selector:
+    app: postgres             # matches the label on the StatefulSet pods
+  ports:
+    - protocol: TCP
+      port: 5432              # cluster-internal port

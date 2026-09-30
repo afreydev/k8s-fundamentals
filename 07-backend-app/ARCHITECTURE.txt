@@ -1,0 +1,102 @@
+==============================================================================
+  backend-k8s — deployment architecture
+  Flask API (Deployment, stateless)  +  PostgreSQL (StatefulSet, stateful)
+==============================================================================
+
+  EXTERNAL                        CLUSTER  (minikube, default namespace)
+  --------                        ───────────────────────────────────────────
+
+    browser / curl
+          │
+          │  http://<node-ip>:30085
+          ▼
+  ┌───────────────────────────────────────────────┐
+  │  Service  backend-service    type: NodePort   │  selector: app=backend
+  │  port 80 ──▶ targetPort 5000                  │  nodePort: 30085
+  └──────────────────────┬────────────────────────┘
+                         │  kube-proxy: round-robin across matching pods
+         ┌───────────────┴───────────────┐
+         ▼                               ▼
+┌─────────────────────────┐   ┌─────────────────────────┐
+│ Pod backend-…-8w986     │   │ Pod backend-…-vhqtf     │   ▲
+│ ──────────────────────  │   │ ──────────────────────  │   │
+│ container: backend      │   │ container: backend      │   │ Deployment
+│ image: afreydev/        │   │ image: afreydev/        │   │ backend-deploy
+│   backend-k8s:latest    │   │   backend-k8s:latest    │   │ replicas: 2
+│ port: 5000 (gunicorn)   │   │ port: 5000 (gunicorn)   │   │
+│ labels: app=backend     │   │ labels: app=backend     │   │
+│ no disk — disposable    │   │ no disk — disposable    │   ▼
+└────────────┬────────────┘   └────────────┬────────────┘
+             │                             │
+             └──────────────┬──────────────┘
+                            │
+      env injected by Kubernetes (values from Secret  backend-db-secret):
+      DB_HOST=postgres-service   DB_PORT=5432   DB_NAME=appdb
+      DB_USER=appuser            DB_PASSWORD=…
+                            │
+                            │  TCP 5432 — DNS name, never a pod IP
+                            ▼
+          ┌─────────────────────────────────────────────┐
+          │  Service  postgres-service (headless)       │  port: 5432
+          │  clusterIP: None — no VIP, DNS returns IPs  │
+          │  selector: app=postgres                     │
+          │  records:                                   │
+          │    postgres-service            → 10.244.0.x │
+          │    postgres-0.postgres-service → 10.244.0.x │
+          └──────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+                    ┌──────────────────────────┐
+                    │ Pod  postgres-0          │  ▲ StatefulSet postgres
+                    │ ──────────────────────   │  │ replicas: 1
+                    │ container: postgres:16   │  │ ordinal names: 0, 1 …
+                    │ port: 5432               │  │ stable identity across
+                    │ labels: app=postgres     │  │ restarts, ordered startup
+                    │ PGDATA = …/data/pgdata   │  │ serviceName:
+                    └────────────┬─────────────┘  │  postgres-service
+                                 │  volumeMounts: /var/lib/postgresql/data
+                                 ▼
+                    ┌──────────────────────────┐
+                    │ PVC  postgres-data-      │  ◄── volumeClaimTemplates:
+                    │        postgres-0  1Gi   │  1 PVC per pod — the same
+                    │ storageclass: standard   │  claim is reattached on
+                    │ access: ReadWriteOnce    │  restart, data kept
+                    └──────────────────────────┘
+
+==============================================================================
+  RESOURCES
+==============================================================================
+  Kind          Name                 File
+  ────          ────                 ────
+  Secret        backend-db-secret    07-backend-app/secret-backend-db.yaml
+  Service       backend-service      07-backend-app/service-backend.yaml
+  Service       postgres-service     07-backend-app/service-postgres.yaml
+                                     (headless: clusterIP: None)
+  Deployment    backend-deploy       07-backend-app/deployment-backend.yaml
+  StatefulSet   postgres             07-backend-app/statefulset-postgres.yaml
+  PVC           postgres-data-       created automatically by
+                  postgres-0         volumeClaimTemplates (not in any file)
+
+==============================================================================
+  REQUEST FLOW  (curl $URL/visits)
+==============================================================================
+  1. curl hits node IP :30085              → NodePort forwards to Service
+  2. backend-service picks a pod           → app=backend, round-robin
+  3. pod reads DB_HOST/DB_USER/DB_PASSWORD → from Secret backend-db-secret
+  4. postgres-service DNS resolves         → postgres-0.postgres-service →
+                                              current pod IP of postgres-0
+  5. row written to the data directory     → PVC postgres-data-postgres-0
+
+==============================================================================
+  WHY TWO CONTROLLERS
+==============================================================================
+  Deployment  (backend)        StatefulSet  (postgres)
+  ─────────────────────        ───────────────────────
+  pods interchangeable         pods have identity: postgres-0 ≠ postgres-1
+  no persistent storage        1 PVC per pod, survives restarts
+  scale / restart any order    ordered: 0 → 1, teardown 1 → 0
+  one Service VIP              per-pod DNS via headless Service
+  ask: "how many copies?"      ask: "which one am I?"
+
+  Rule of thumb: if losing the pod's name or disk matters, it's a StatefulSet.
+==============================================================================
