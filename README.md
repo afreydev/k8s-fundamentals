@@ -1,6 +1,6 @@
 # Kubernetes Fundamentals — 1-Hour Lecture Guide
 
-Hands-on session using minikube. Phases 0–5 use only public images (`nginx`, `redis`, `busybox`) — no custom images to build. The capstone (Phase 6) builds and deploys our own: a small Flask API + a PostgreSQL StatefulSet. The rule for the session: create everything with `kubectl apply -f <file>.yaml`. We'll show `kubectl run` once and then leave it alone.
+Hands-on session using minikube. Phases 0–6 use only public images (`nginx`, `redis`, `busybox`) — no custom images to build. The capstone (Phase 7) builds and deploys our own: a small Flask API + a PostgreSQL StatefulSet. The rule for the session: create everything with `kubectl apply -f <file>.yaml`. We'll show `kubectl run` once and then leave it alone.
 
 ---
 
@@ -12,9 +12,10 @@ Hands-on session using minikube. Phases 0–5 use only public images (`nginx`, `
 | 1 | Architecture walkthrough | 15 min |
 | 2 | Pods | 12 min |
 | 3 | Deployments | 13 min |
-| 4 | Services | 12 min |
-| 5 | ConfigMaps, Secrets, Namespaces + Q&A | 8 min |
-| 6 | Capstone: backend + database (Deployment + StatefulSet) | +15 min (optional) |
+| 4 | Canary: two versions, one Service | +8 min (optional) |
+| 5 | Services | 12 min |
+| 6 | ConfigMaps, Secrets, Namespaces + Q&A | 8 min |
+| 7 | Capstone: backend + database (Deployment + StatefulSet) | +15 min (optional) |
 
 ---
 
@@ -366,13 +367,13 @@ kubectl rollout status deployment/nginx-deploy
 
 ---
 
-## Bonus demo — two versions, one Service (canary pattern)
+## Phase 4 — Canary: two versions, one Service (+8 min, optional)
 
 This demo makes label selectors and load balancing concrete: two Deployments run different versions of the same app, and a single Service routes traffic to both because they share a common label.
 
 The image used is `hashicorp/http-echo` — it serves whatever string you pass as `-text`, so each version replies with a different message and you can see the balancing live.
 
-### `06-canary/deployment-v1.yaml`
+### `04-canary/deployment-v1.yaml`
 
 ```yaml
 apiVersion: apps/v1
@@ -400,7 +401,7 @@ spec:
             - containerPort: 5678
 ```
 
-### `06-canary/deployment-v2.yaml`
+### `04-canary/deployment-v2.yaml`
 
 ```yaml
 apiVersion: apps/v1
@@ -428,7 +429,7 @@ spec:
             - containerPort: 5678
 ```
 
-### `06-canary/service-echo.yaml`
+### `04-canary/service-echo.yaml`
 
 The selector only matches on `app: echo` — it intentionally ignores `version`. This means it sees all 4 pods (2 × v1, 2 × v2) as valid endpoints.
 
@@ -451,9 +452,9 @@ spec:
 ### Apply and watch the balancing
 
 ```bash
-kubectl apply -f 06-canary/deployment-v1.yaml
-kubectl apply -f 06-canary/deployment-v2.yaml
-kubectl apply -f 06-canary/service-echo.yaml
+kubectl apply -f 04-canary/deployment-v1.yaml
+kubectl apply -f 04-canary/deployment-v2.yaml
+kubectl apply -f 04-canary/service-echo.yaml
 
 # Confirm all 4 pods are endpoints of the service
 kubectl get pods -l app=echo --show-labels
@@ -486,8 +487,8 @@ Hello from v2
 # Send ~25% traffic to v2 by keeping 3 v1 pods and 1 v2 pod
 # Edit deployment-v1.yaml → replicas: 3
 # Edit deployment-v2.yaml → replicas: 1
-kubectl apply -f 06-canary/deployment-v1.yaml
-kubectl apply -f 06-canary/deployment-v2.yaml
+kubectl apply -f 04-canary/deployment-v1.yaml
+kubectl apply -f 04-canary/deployment-v2.yaml
 
 for i in $(seq 1 8); do curl -s $(minikube service echo-service --url); done
 # Now roughly 6 × v1, 2 × v2
@@ -496,16 +497,16 @@ for i in $(seq 1 8); do curl -s $(minikube service echo-service --url); done
 ### Clean up
 
 ```bash
-kubectl delete -f 06-canary/deployment-v1.yaml
-kubectl delete -f 06-canary/deployment-v2.yaml
-kubectl delete -f 06-canary/service-echo.yaml
+kubectl delete -f 04-canary/deployment-v1.yaml
+kubectl delete -f 04-canary/deployment-v2.yaml
+kubectl delete -f 04-canary/service-echo.yaml
 ```
 
  > Key teaching point: the Service selector is the only thing that decides which pods receive traffic. Adding or removing a label from a pod — or from the selector — is how you include or exclude it, with no downtime and no Service restart needed.
 
 ---
 
-## Phase 4 — Services (12 min)
+## Phase 5 — Services (12 min)
 
 Pod IPs change every time a pod restarts. A **Service** solves this by giving you a stable DNS name and virtual IP that kube-proxy keeps pointing at the current live pods.
 
@@ -517,7 +518,7 @@ Pod IPs change every time a pod restarts. A **Service** solves this by giving yo
 | **NodePort** | Node IP + a port in 30000–32767 | Local dev, minikube demos |
 | **LoadBalancer** | Cloud load balancer | Production external traffic |
 
-### The manifest — `04-services/service-nginx.yaml`
+### The manifest — `05-services/service-nginx.yaml`
 
 ```yaml
 apiVersion: v1
@@ -540,7 +541,7 @@ spec:
 kubectl apply -f 03-deployments/deployment-nginx.yaml
 
 # Apply the service
-kubectl apply -f 04-services/service-nginx.yaml
+kubectl apply -f 05-services/service-nginx.yaml
 
 kubectl get services
 kubectl describe service nginx-service
@@ -551,7 +552,7 @@ minikube service nginx-service --url
 curl $(minikube service nginx-service --url)
 ```
 
-### Internal access demo — `04-services/pod-busybox.yaml`
+### Internal access demo — `05-services/pod-busybox.yaml`
 
 ```yaml
 apiVersion: v1
@@ -566,18 +567,18 @@ spec:
 ```
 
 ```bash
-kubectl apply -f 04-services/pod-busybox.yaml
+kubectl apply -f 05-services/pod-busybox.yaml
 
 # Reach nginx by Service name — DNS resolution inside the cluster
 kubectl exec -it busybox-client -- wget -qO- nginx-service
 
-kubectl delete -f 04-services/pod-busybox.yaml
+kubectl delete -f 05-services/pod-busybox.yaml
 ```
 
-### Clean up phase 4
+### Clean up phase 5
 
 ```bash
-kubectl delete -f 04-services/service-nginx.yaml
+kubectl delete -f 05-services/service-nginx.yaml
 kubectl delete -f 03-deployments/deployment-nginx.yaml
 ```
 
@@ -585,13 +586,13 @@ kubectl delete -f 03-deployments/deployment-nginx.yaml
 
 ---
 
-## Phase 5 — ConfigMaps, Secrets & Namespaces + Q&A (8 min)
+## Phase 6 — ConfigMaps, Secrets & Namespaces + Q&A (8 min)
 
 ### ConfigMaps
 
 Keep config out of your container image. A ConfigMap holds plain key-value pairs that pods can consume as env vars or mounted files.
 
-**`05-config/configmap-app.yaml`**
+**`06-config/configmap-app.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -604,7 +605,7 @@ data:
   MAX_CONNECTIONS: "100"
 ```
 
-**`05-config/pod-with-configmap.yaml`** — consuming ConfigMap as env vars
+**`06-config/pod-with-configmap.yaml`** — consuming ConfigMap as env vars
 
 ```yaml
 apiVersion: v1
@@ -621,8 +622,8 @@ spec:
 ```
 
 ```bash
-kubectl apply -f 05-config/configmap-app.yaml
-kubectl apply -f 05-config/pod-with-configmap.yaml
+kubectl apply -f 06-config/configmap-app.yaml
+kubectl apply -f 06-config/pod-with-configmap.yaml
 
 kubectl get configmaps
 kubectl describe configmap app-config
@@ -630,8 +631,8 @@ kubectl describe configmap app-config
 # Verify the env vars are injected
 kubectl exec -it config-demo -- env | grep -E "APP_ENV|LOG_LEVEL|MAX_CONNECTIONS"
 
-kubectl delete -f 05-config/pod-with-configmap.yaml
-kubectl delete -f 05-config/configmap-app.yaml
+kubectl delete -f 06-config/pod-with-configmap.yaml
+kubectl delete -f 06-config/configmap-app.yaml
 ```
 
 ---
@@ -640,7 +641,7 @@ kubectl delete -f 05-config/configmap-app.yaml
 
 Same idea as ConfigMap, but values are base64-encoded and get extra treatment in real clusters — RBAC, encryption at rest. Worth being clear: base64 is not encryption, it's just encoding.
 
-**`05-config/secret-db.yaml`**
+**`06-config/secret-db.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -653,7 +654,7 @@ stringData:                  # use stringData — kubectl encodes it for you
   DB_USER: admin
 ```
 
-**`05-config/pod-with-secret.yaml`** — consuming Secret as env vars
+**`06-config/pod-with-secret.yaml`** — consuming Secret as env vars
 
 ```yaml
 apiVersion: v1
@@ -678,8 +679,8 @@ spec:
 ```
 
 ```bash
-kubectl apply -f 05-config/secret-db.yaml
-kubectl apply -f 05-config/pod-with-secret.yaml
+kubectl apply -f 06-config/secret-db.yaml
+kubectl apply -f 06-config/pod-with-secret.yaml
 
 kubectl get secrets
 kubectl describe secret db-secret          # values are hidden
@@ -687,8 +688,8 @@ kubectl describe secret db-secret          # values are hidden
 # Decode manually
 kubectl get secret db-secret -o jsonpath='{.data.DB_PASSWORD}' | base64 --decode
 
-kubectl delete -f 05-config/pod-with-secret.yaml
-kubectl delete -f 05-config/secret-db.yaml
+kubectl delete -f 06-config/pod-with-secret.yaml
+kubectl delete -f 06-config/secret-db.yaml
 ```
 
 ---
@@ -697,7 +698,7 @@ kubectl delete -f 05-config/secret-db.yaml
 
 Namespaces let you carve up a cluster into isolated slices — by team, by environment, whatever makes sense. Resources in different namespaces can share the same name without conflicting.
 
-**`05-config/namespace-staging.yaml`**
+**`06-config/namespace-staging.yaml`**
 
 ```yaml
 apiVersion: v1
@@ -706,7 +707,7 @@ metadata:
   name: staging
 ```
 
-**`05-config/deployment-redis-staging.yaml`** — scoped to the staging namespace
+**`06-config/deployment-redis-staging.yaml`** — scoped to the staging namespace
 
 ```yaml
 apiVersion: apps/v1
@@ -732,21 +733,21 @@ spec:
 ```
 
 ```bash
-kubectl apply -f 05-config/namespace-staging.yaml
-kubectl apply -f 05-config/deployment-redis-staging.yaml
+kubectl apply -f 06-config/namespace-staging.yaml
+kubectl apply -f 06-config/deployment-redis-staging.yaml
 
 kubectl get namespaces
 kubectl get pods -n staging
 kubectl get pods --all-namespaces          # see everything across all namespaces
 
 # Deleting a namespace removes everything inside it
-kubectl delete -f 05-config/deployment-redis-staging.yaml
-kubectl delete -f 05-config/namespace-staging.yaml
+kubectl delete -f 06-config/deployment-redis-staging.yaml
+kubectl delete -f 06-config/namespace-staging.yaml
 ```
 
 ---
 
-## Phase 6 — Capstone: backend + database (+15 min, optional)
+## Phase 7 — Capstone: backend + database (+15 min, optional)
 
 Everything so far was a single stateless component running a public image. Real applications look more like this: a stateless API you scale freely, and a stateful database that must keep its data *and* its identity. Same cluster, two different controllers.
 
@@ -784,7 +785,7 @@ The rule of thumb: **ask whether the workload cares which pod it is.** A web ser
 
 ### The application — `07-backend-app/`
 
-A tiny Flask API that talks to PostgreSQL. Every piece of configuration comes from environment variables — injected by Kubernetes, exactly like the Secret/ConfigMap demos in Phase 5.
+A tiny Flask API that talks to PostgreSQL. Every piece of configuration comes from environment variables — injected by Kubernetes, exactly like the Secret/ConfigMap demos in Phase 6.
 
 | Endpoint | Method | What it does |
 |----------|--------|--------------|
@@ -911,7 +912,7 @@ Note what is **not** here: no `storageClassName`, no manual `PersistentVolume` m
 | `07-backend-app/deployment-backend.yaml` | Deployment | Flask API, 2 replicas |
 | `07-backend-app/service-backend.yaml` | Service (NodePort) | Entry point for browser traffic |
 
-**`07-backend-app/secret-backend-db.yaml`** — same pattern as Phase 5, consumed by *both* controllers:
+**`07-backend-app/secret-backend-db.yaml`** — same pattern as Phase 6, consumed by *both* controllers:
 
 ```yaml
 apiVersion: v1
@@ -1041,7 +1042,7 @@ spec:
               memory: "128Mi"
 ```
 
-`DB_HOST` is the **Service name**, never a pod IP — the whole point of Phase 4. The two backend pods are disposable; the database address never changes.
+`DB_HOST` is the **Service name**, never a pod IP — the whole point of Phase 5. The two backend pods are disposable; the database address never changes.
 
 **`07-backend-app/service-backend.yaml`**
 
@@ -1153,7 +1154,7 @@ kubectl scale statefulset postgres --replicas=1   # reverse order: postgres-1 is
 
  > Note: `replicas: 2` does **not** magically give you a working two-node Postgres cluster — replication has to be configured inside PostgreSQL itself. The StatefulSet provides the *plumbing* (stable names + storage), not the database logic. Worth saying out loud, because it's the most common misconception about StatefulSets.
 
-### Clean up phase 6
+### Clean up phase 7
 
 ```bash
 kubectl delete -f 07-backend-app/service-backend.yaml
@@ -1210,22 +1211,22 @@ kubectl rollout undo deployment/<name>
 | `02-pods/pod-nginx.yaml` | Pod | 2 |
 | `03-deployments/replicaset-nginx.yaml` | ReplicaSet | 3 |
 | `03-deployments/deployment-nginx.yaml` | Deployment | 3 |
-| `04-services/service-nginx.yaml` | Service | 4 |
-| `04-services/pod-busybox.yaml` | Pod | 4 |
-| `05-config/configmap-app.yaml` | ConfigMap | 5 |
-| `05-config/pod-with-configmap.yaml` | Pod | 5 |
-| `05-config/secret-db.yaml` | Secret | 5 |
-| `05-config/pod-with-secret.yaml` | Pod | 5 |
-| `05-config/namespace-staging.yaml` | Namespace | 5 |
-| `05-config/deployment-redis-staging.yaml` | Deployment | 5 |
-| `06-canary/deployment-v1.yaml` | Deployment | bonus |
-| `06-canary/deployment-v2.yaml` | Deployment | bonus |
-| `06-canary/service-echo.yaml` | Service | bonus |
-| `07-backend-app/secret-backend-db.yaml` | Secret | 6 |
-| `07-backend-app/service-postgres.yaml` | Service (headless) | 6 |
-| `07-backend-app/statefulset-postgres.yaml` | StatefulSet | 6 |
-| `07-backend-app/deployment-backend.yaml` | Deployment | 6 |
-| `07-backend-app/service-backend.yaml` | Service (NodePort) | 6 |
+| `04-canary/deployment-v1.yaml` | Deployment | 4 |
+| `04-canary/deployment-v2.yaml` | Deployment | 4 |
+| `04-canary/service-echo.yaml` | Service | 4 |
+| `05-services/service-nginx.yaml` | Service | 5 |
+| `05-services/pod-busybox.yaml` | Pod | 5 |
+| `06-config/configmap-app.yaml` | ConfigMap | 6 |
+| `06-config/pod-with-configmap.yaml` | Pod | 6 |
+| `06-config/secret-db.yaml` | Secret | 6 |
+| `06-config/pod-with-secret.yaml` | Pod | 6 |
+| `06-config/namespace-staging.yaml` | Namespace | 6 |
+| `06-config/deployment-redis-staging.yaml` | Deployment | 6 |
+| `07-backend-app/secret-backend-db.yaml` | Secret | 7 |
+| `07-backend-app/service-postgres.yaml` | Service (headless) | 7 |
+| `07-backend-app/statefulset-postgres.yaml` | StatefulSet | 7 |
+| `07-backend-app/deployment-backend.yaml` | Deployment | 7 |
+| `07-backend-app/service-backend.yaml` | Service (NodePort) | 7 |
 
 ---
 
@@ -1234,17 +1235,17 @@ kubectl rollout undo deployment/<name>
 ```bash
 kubectl delete -f 02-pods/pod-nginx.yaml
 kubectl delete -f 03-deployments/deployment-nginx.yaml
-kubectl delete -f 04-services/service-nginx.yaml
-kubectl delete -f 04-services/pod-busybox.yaml
-kubectl delete -f 05-config/configmap-app.yaml
-kubectl delete -f 05-config/pod-with-configmap.yaml
-kubectl delete -f 05-config/secret-db.yaml
-kubectl delete -f 05-config/pod-with-secret.yaml
-kubectl delete -f 05-config/deployment-redis-staging.yaml
-kubectl delete -f 05-config/namespace-staging.yaml
-kubectl delete -f 06-canary/deployment-v1.yaml
-kubectl delete -f 06-canary/deployment-v2.yaml
-kubectl delete -f 06-canary/service-echo.yaml
+kubectl delete -f 05-services/service-nginx.yaml
+kubectl delete -f 05-services/pod-busybox.yaml
+kubectl delete -f 06-config/configmap-app.yaml
+kubectl delete -f 06-config/pod-with-configmap.yaml
+kubectl delete -f 06-config/secret-db.yaml
+kubectl delete -f 06-config/pod-with-secret.yaml
+kubectl delete -f 06-config/deployment-redis-staging.yaml
+kubectl delete -f 06-config/namespace-staging.yaml
+kubectl delete -f 04-canary/deployment-v1.yaml
+kubectl delete -f 04-canary/deployment-v2.yaml
+kubectl delete -f 04-canary/service-echo.yaml
 kubectl delete -f 07-backend-app/service-backend.yaml
 kubectl delete -f 07-backend-app/deployment-backend.yaml
 kubectl delete -f 07-backend-app/statefulset-postgres.yaml
